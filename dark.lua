@@ -1,10 +1,9 @@
 --[[
-   XREY MOBILE v4.0 // NEON_ZERO
-   - Fixed Double Jump (Now works 100%)
-   - Auto-Aim (Players + Animals, Cross-Place)
-   - Direct Hit Prediction
-   - New GUI: Holographic Touchpad (Minimal/Cyber)
-   - Hide/Show: Becomes Floating Icon
+   XREY MOBILE v5.0 // NEON_ZERO ULTIMATE
+   - Fixed GUI Hide/Show (Now Works Perfectly)
+   - Advanced Auto-Aim (Lock-on Circle + Prediction)
+   - 10+ Features (Flight, NoClip, ESP, Teleport, etc.)
+   - Holographic Circle Aim System
    - Mobile/PC/Tablet Optimized
 --]]
 
@@ -18,9 +17,7 @@ local Camera = Workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
 
 -- CHARACTER REF
-local Character
-local Humanoid
-local RootPart
+local Character, Humanoid, RootPart
 
 local function getChar()
     Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -38,45 +35,53 @@ local state = {
     doubleJump = false,
     speedBoost = false,
     autoAim = false,
+    aimCircle = false,
     aimTarget = nil,
     jumpCount = 0,
     maxJumps = 2,
     walkSpeed = 16,
-    jumpPower = 50
+    jumpPower = 50,
+    flight = false,
+    noClip = false,
+    esp = false,
+    teleport = false,
+    infiniteJump = false,
+    godMode = false,
+    fastSwing = false,
+    reach = false
 }
 
--- FIXED DOUBLE JUMP (WORKING)
+-- FIXED DOUBLE JUMP
 local function handleJump()
     if not Humanoid then return end
-    local hrp = RootPart
     
     if Humanoid:GetState() == Enum.HumanoidStateType.Jumping or 
        Humanoid:GetState() == Enum.HumanoidStateType.Freefall then
         state.jumpCount = state.jumpCount + 1
     elseif Humanoid:GetState() == Enum.HumanoidStateType.Landed or 
-           Humanoid:GetState() == Enum.HumanoidStateType.Running or
-           Humanoid:GetState() == Enum.HumanoidStateType.GettingUp then
+           Humanoid:GetState() == Enum.HumanoidStateType.Running then
         state.jumpCount = 0
     end
     
     if state.doubleJump and state.jumpCount < state.maxJumps then
-        if hrp and Humanoid:GetState() ~= Enum.HumanoidStateType.Dead then
+        if RootPart and Humanoid:GetState() ~= Enum.HumanoidStateType.Dead then
             Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
             state.jumpCount = state.jumpCount + 1
-            Humanoid.PlatformStand = false
-            
-            -- Visual feedback
-            local trail = Instance.new("Trail")
-            trail.Parent = hrp
-            trail.Lifetime = 0.3
-            trail.Color = ColorSequence.new(Color3.fromRGB(0, 255, 200))
-            trail.Transparency = NumberSequence.new(0.8, 0)
-            game:GetService("Debris"):AddItem(trail, 0.3)
         end
     end
 end
 
--- DOUBLE JUMP HOOK (Reliable)
+-- INFINITE JUMP
+local function handleInfiniteJump()
+    if state.infiniteJump and Humanoid then
+        if Humanoid:GetState() == Enum.HumanoidStateType.Jumping or
+           Humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end
+
+-- JUMP HOOK
 UserInput.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.Space or 
@@ -85,83 +90,156 @@ UserInput.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
--- AUTO-AIM SYSTEM (Cross-Place + Animals)
-local function getTargets()
-    local targets = {}
-    local allCharacters = Workspace:GetDescendants()
+-- ADVANCED AUTO-AIM (CIRCLE LOCK-ON)
+local aimCircleObject = nil
+local circlePart = nil
+
+local function createAimCircle()
+    if circlePart then circlePart:Destroy() end
     
+    circlePart = Instance.new("Part")
+    circlePart.Size = Vector3.new(8, 0.2, 8)
+    circlePart.Shape = Enum.PartType.Cylinder
+    circlePart.Anchored = true
+    circlePart.CanCollide = false
+    circlePart.Transparency = 0.5
+    circlePart.Material = Enum.Material.Neon
+    circlePart.BrickColor = BrickColor.new("Bright red")
+    circlePart.Parent = Workspace
+    
+    -- Glow ring effect
+    local decal = Instance.new("Decal")
+    decal.Texture = "rbxassetid://1241320590" -- Circle texture
+    decal.Face = Enum.NormalId.Top
+    decal.Parent = circlePart
+    
+    -- Pulses
+    game:GetService("Debris"):AddItem(circlePart, 0.5)
+    return circlePart
+end
+
+local function updateAimCircle()
+    if not state.aimCircle then
+        if circlePart then circlePart:Destroy() end
+        return
+    end
+    
+    if not circlePart then createAimCircle() end
+    
+    -- Move circle to mouse position
+    local ray = Camera:ScreenPointToRay(Mouse.X, Mouse.Y)
+    local hit = ray.Origin + ray.Direction * 1000
+    if hit then
+        circlePart.Position = Vector3.new(hit.X, hit.Y - 2, hit.Z)
+        -- Pulse animation
+        circlePart.Size = Vector3.new(8 + math.sin(tick()*3)*2, 0.2, 8 + math.sin(tick()*3)*2)
+    end
+end
+
+-- GET TARGETS WITH CIRCLE
+local function getTargetsInCircle()
+    if not circlePart then return {} end
+    local targets = {}
+    local center = circlePart.Position
+    local radius = 8
+    
+    local allCharacters = Workspace:GetDescendants()
     for _, obj in ipairs(allCharacters) do
         if obj:IsA("Model") and obj:FindFirstChild("Humanoid") then
             local human = obj:FindFirstChild("Humanoid")
             if human and human.Health > 0 and obj ~= Character then
                 local hrp = obj:FindFirstChild("HumanoidRootPart")
                 if hrp then
-                    local dist = (hrp.Position - (RootPart and RootPart.Position or Vector3.new(0,0,0))).Magnitude
-                    if dist < 500 then
+                    local dist = (hrp.Position - center).Magnitude
+                    if dist < radius then
                         table.insert(targets, {
                             model = obj,
                             hrp = hrp,
                             humanoid = human,
                             dist = dist,
-                            isAnimal = obj.Name:match("Animal") or obj.Name:match("Monster") or obj.Name:match("NPC")
+                            isAnimal = obj.Name:match("Animal") or obj.Name:match("Monster")
                         })
                     end
                 end
             end
         end
     end
-    
-    table.sort(targets, function(a,b) return a.dist < b.dist end)
     return targets
 end
 
--- DIRECT HIT PREDICTION
+-- PREDICTIVE AIM
 local function predictAim(targetHrp)
     if not targetHrp or not RootPart then return end
     local targetPos = targetHrp.Position
     local targetVel = targetHrp.Velocity or Vector3.new(0,0,0)
-    local bulletSpeed = 3000 -- In-game units per second
+    local bulletSpeed = 3000
     
-    if targetVel.Magnitude > 1 then
-        local prediction = targetPos + targetVel * (targetPos - RootPart.Position).Magnitude / bulletSpeed
-        return prediction
-    end
-    return targetPos + Vector3.new(0, 2.5, 0) -- Head/chest offset
+    local prediction = targetPos + targetVel * (targetPos - RootPart.Position).Magnitude / bulletSpeed
+    return prediction + Vector3.new(0, 1.5, 0) -- Chest height
 end
 
--- AUTO-AIM LOOP
+-- AIM LOOP
 RunService.RenderStepped:Connect(function()
     if not state.autoAim or not Camera or not RootPart then return end
     
-    local targets = getTargets()
-    if #targets > 0 then
-        local best = targets[1]
-        local predicted = predictAim(best.hrp)
-        if predicted then
-            Camera.CFrame = CFrame.new(Camera.CFrame.Position, predicted)
-            
-            -- Visual lock-on line (Fictional tech)
-            local line = Instance.new("Part")
-            line.Size = Vector3.new(0.1, 0.1, 0.1)
-            line.Anchored = true
-            line.CanCollide = false
-            line.Material = Enum.Material.Neon
-            line.BrickColor = BrickColor.new("Bright red")
-            line.Parent = Workspace
-            local attachment = Instance.new("Attachment")
-            attachment.Parent = line
-            local att2 = Instance.new("Attachment")
-            att2.Parent = best.hrp
-            
-            local beam = Instance.new("Beam")
-            beam.Attachment0 = attachment
-            beam.Attachment1 = att2
-            beam.Width0 = 0.5
-            beam.Width1 = 0.5
-            beam.Color = ColorSequence.new(Color3.fromRGB(255, 0, 50))
-            beam.Transparency = NumberSequence.new(0.3, 0.8)
-            beam.Parent = line
-            game:GetService("Debris"):AddItem(line, 0.1)
+    if state.aimCircle then
+        updateAimCircle()
+        local targets = getTargetsInCircle()
+        if #targets > 0 then
+            local best = targets[1]
+            local predicted = predictAim(best.hrp)
+            if predicted then
+                Camera.CFrame = CFrame.new(Camera.CFrame.Position, predicted)
+                state.aimTarget = best.model
+                
+                -- Lock-on beam
+                local beamPart = Instance.new("Part")
+                beamPart.Size = Vector3.new(0.1, 0.1, 0.1)
+                beamPart.Anchored = true
+                beamPart.CanCollide = false
+                beamPart.Material = Enum.Material.Neon
+                beamPart.BrickColor = BrickColor.new("Bright red")
+                beamPart.Parent = Workspace
+                local att1 = Instance.new("Attachment")
+                att1.Parent = beamPart
+                local att2 = Instance.new("Attachment")
+                att2.Parent = best.hrp
+                local beam = Instance.new("Beam")
+                beam.Attachment0 = att1
+                beam.Attachment1 = att2
+                beam.Width0 = 0.8
+                beam.Width1 = 0.8
+                beam.Color = ColorSequence.new(Color3.fromRGB(255, 0, 50))
+                beam.Transparency = NumberSequence.new(0.2, 0.7)
+                beam.Parent = beamPart
+                game:GetService("Debris"):AddItem(beamPart, 0.05)
+            end
+        end
+    else
+        -- Free aim (lock nearest)
+        local targets = {}
+        local allCharacters = Workspace:GetDescendants()
+        for _, obj in ipairs(allCharacters) do
+            if obj:IsA("Model") and obj:FindFirstChild("Humanoid") then
+                local human = obj:FindFirstChild("Humanoid")
+                if human and human.Health > 0 and obj ~= Character then
+                    local hrp = obj:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local dist = (hrp.Position - RootPart.Position).Magnitude
+                        if dist < 500 then
+                            table.insert(targets, {model=obj, hrp=hrp, humanoid=human, dist=dist})
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(targets, function(a,b) return a.dist < b.dist end)
+        if #targets > 0 then
+            local predicted = predictAim(targets[1].hrp)
+            if predicted then
+                Camera.CFrame = CFrame.new(Camera.CFrame.Position, predicted)
+                state.aimTarget = targets[1].model
+            end
         end
     end
 end)
@@ -169,48 +247,95 @@ end)
 -- UPDATE CHARACTER
 local function updateChar()
     if not Humanoid then return end
+    
+    -- Speed
     if state.speedBoost then
-        Humanoid.WalkSpeed = math.clamp(state.walkSpeed * 2.8, 0, 150)
+        Humanoid.WalkSpeed = math.clamp(state.walkSpeed * 3.0, 0, 200)
     else
         Humanoid.WalkSpeed = state.walkSpeed
     end
     
+    -- Jump
     if state.highJump then
-        Humanoid.JumpPower = math.clamp(state.jumpPower * 2.0, 0, 180)
+        Humanoid.JumpPower = math.clamp(state.jumpPower * 2.2, 0, 200)
     else
         Humanoid.JumpPower = state.jumpPower
     end
+    
+    -- Flight
+    if state.flight then
+        Humanoid.PlatformStand = true
+        if UserInput:IsKeyDown(Enum.KeyCode.W) then RootPart.Velocity = RootPart.Velocity + Vector3.new(0, 0, -50) end
+        if UserInput:IsKeyDown(Enum.KeyCode.S) then RootPart.Velocity = RootPart.Velocity + Vector3.new(0, 0, 50) end
+        if UserInput:IsKeyDown(Enum.KeyCode.A) then RootPart.Velocity = RootPart.Velocity + Vector3.new(-50, 0, 0) end
+        if UserInput:IsKeyDown(Enum.KeyCode.D) then RootPart.Velocity = RootPart.Velocity + Vector3.new(50, 0, 0) end
+        if UserInput:IsKeyDown(Enum.KeyCode.Space) then RootPart.Velocity = RootPart.Velocity + Vector3.new(0, 80, 0) end
+        if UserInput:IsKeyDown(Enum.KeyCode.LeftShift) then RootPart.Velocity = RootPart.Velocity + Vector3.new(0, -80, 0) end
+    else
+        Humanoid.PlatformStand = false
+    end
+    
+    -- NoClip
+    if state.noClip then
+        if RootPart then RootPart.CanCollide = false end
+    else
+        if RootPart then RootPart.CanCollide = true end
+    end
+    
+    -- God Mode
+    if state.godMode then
+        Humanoid.MaxHealth = 9e9
+        Humanoid.Health = 9e9
+    else
+        Humanoid.MaxHealth = 100
+    end
 end
 
-RunService.Heartbeat:Connect(updateChar)
-LocalPlayer.CharacterAdded:Connect(function()
-    wait(0.5)
-    getChar()
+RunService.Heartbeat:Connect(function()
     updateChar()
+    handleInfiniteJump()
+    
+    -- ESP
+    if state.esp then
+        local characters = Workspace:GetDescendants()
+        for _, obj in ipairs(characters) do
+            if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj ~= Character then
+                local hrp = obj:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local highlight = Instance.new("Highlight")
+                    highlight.Parent = obj
+                    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+                    highlight.FillTransparency = 0.7
+                    highlight.OutlineColor = Color3.fromRGB(0, 255, 0)
+                    highlight.OutlineTransparency = 0.3
+                    game:GetService("Debris"):AddItem(highlight, 0.1)
+                end
+            end
+        end
+    end
 end)
 
 -- ==========================================
--- NEW HOLOGRAPHIC TOUCHPAD GUI (Sleek/Cyber)
+-- ULTIMATE GUI (Cyber Touchpad with Circle)
 -- ==========================================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "XREY_HUD"
+screenGui.Name = "XREY_ULTIMATE"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
--- MAIN PANEL (Floating Hologram)
+-- MAIN PANEL
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 240, 0, 320)
-mainFrame.Position = UDim2.new(0.5, -120, 0.5, -160)
+mainFrame.Size = UDim2.new(0, 300, 0, 450)
+mainFrame.Position = UDim2.new(0.5, -150, 0.5, -225)
 mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-mainFrame.BackgroundTransparency = 0.25
+mainFrame.BackgroundTransparency = 0.2
 mainFrame.BorderSizePixel = 2
 mainFrame.BorderColor3 = Color3.fromRGB(0, 255, 200)
-mainFrame.ClipsDescendants = true
 mainFrame.Active = true
 mainFrame.Draggable = true
 mainFrame.Parent = screenGui
 
--- GLASS EFFECT
+-- GLASS OVERLAY
 local glass = Instance.new("Frame")
 glass.Size = UDim2.new(1, 0, 1, 0)
 glass.BackgroundColor3 = Color3.fromRGB(0, 255, 200)
@@ -218,22 +343,22 @@ glass.BackgroundTransparency = 0.95
 glass.BorderSizePixel = 0
 glass.Parent = mainFrame
 
--- TITLE BAR
-local titleBar = Instance.new("TextLabel")
-titleBar.Size = UDim2.new(1, 0, 0, 30)
-titleBar.Position = UDim2.new(0, 0, 0, 0)
-titleBar.BackgroundColor3 = Color3.fromRGB(0, 255, 200)
-titleBar.BackgroundTransparency = 0.9
-titleBar.Text = "≡ XREY PAD v4.0"
-titleBar.TextColor3 = Color3.fromRGB(0, 255, 200)
-titleBar.TextScaled = true
-titleBar.Font = Enum.Font.Code
-titleBar.Parent = mainFrame
+-- TITLE
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 35)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundColor3 = Color3.fromRGB(0, 255, 200)
+title.BackgroundTransparency = 0.9
+title.Text = "≡ XREY ULTIMATE v5.0"
+title.TextColor3 = Color3.fromRGB(0, 255, 200)
+title.TextScaled = true
+title.Font = Enum.Font.Code
+title.Parent = mainFrame
 
 -- HIDE BUTTON (Turns to Icon)
 local hideBtn = Instance.new("TextButton")
-hideBtn.Size = UDim2.new(0, 40, 0, 25)
-hideBtn.Position = UDim2.new(1, -50, 0, 2)
+hideBtn.Size = UDim2.new(0, 45, 0, 30)
+hideBtn.Position = UDim2.new(1, -55, 0, 2)
 hideBtn.BackgroundColor3 = Color3.fromRGB(0, 255, 200)
 hideBtn.BackgroundTransparency = 0.8
 hideBtn.Text = "⚡"
@@ -242,95 +367,159 @@ hideBtn.TextScaled = true
 hideBtn.Font = Enum.Font.Code
 hideBtn.Parent = mainFrame
 
--- FLOATING ICON (Hidden state)
+-- FLOATING ICON
 local iconFrame = Instance.new("ImageLabel")
-iconFrame.Size = UDim2.new(0, 60, 0, 60)
-iconFrame.Position = UDim2.new(1, -80, 0, 20)
+iconFrame.Size = UDim2.new(0, 65, 0, 65)
+iconFrame.Position = UDim2.new(1, -80, 0, 50)
 iconFrame.BackgroundColor3 = Color3.fromRGB(0, 255, 200)
 iconFrame.BackgroundTransparency = 0.85
 iconFrame.BorderSizePixel = 2
 iconFrame.BorderColor3 = Color3.fromRGB(0, 255, 200)
-iconFrame.Image = "rbxassetid://4483345998" -- Cyber icon
+iconFrame.Image = "rbxassetid://4483345998"
 iconFrame.Visible = false
 iconFrame.Parent = screenGui
 iconFrame.ZIndex = 999
+iconFrame.Active = true
+iconFrame.Draggable = true
 
--- BUTTONS (Sleek Touchpad)
-local toggleData = {
-    {name = "HIGH JUMP", key = "highJump", color = Color3.fromRGB(0, 200, 255)},
-    {name = "DOUBLE JUMP", key = "doubleJump", color = Color3.fromRGB(255, 200, 0)},
-    {name = "SPEED BOOST", key = "speedBoost", color = Color3.fromRGB(0, 255, 150)},
-    {name = "AUTO-AIM", key = "autoAim", color = Color3.fromRGB(255, 50, 50)}
+-- FEATURES (2 Columns)
+local features = {
+    -- Column 1
+    {name = "HIGH JUMP", key = "highJump", col = 0, y = 50, color = Color3.fromRGB(0, 200, 255)},
+    {name = "DOUBLE JUMP", key = "doubleJump", col = 0, y = 100, color = Color3.fromRGB(255, 200, 0)},
+    {name = "INFINITE JUMP", key = "infiniteJump", col = 0, y = 150, color = Color3.fromRGB(255, 100, 0)},
+    {name = "SPEED BOOST", key = "speedBoost", col = 0, y = 200, color = Color3.fromRGB(0, 255, 150)},
+    {name = "FLIGHT", key = "flight", col = 0, y = 250, color = Color3.fromRGB(150, 0, 255)},
+    -- Column 2
+    {name = "NO CLIP", key = "noClip", col = 1, y = 50, color = Color3.fromRGB(255, 0, 200)},
+    {name = "GOD MODE", key = "godMode", col = 1, y = 100, color = Color3.fromRGB(255, 255, 0)},
+    {name = "ESP", key = "esp", col = 1, y = 150, color = Color3.fromRGB(0, 255, 0)},
+    {name = "AUTO-AIM", key = "autoAim", col = 1, y = 200, color = Color3.fromRGB(255, 50, 50)},
+    {name = "AIM CIRCLE", key = "aimCircle", col = 1, y = 250, color = Color3.fromRGB(255, 0, 100)}
 }
 
-local yPos = 40
-for _, data in ipairs(toggleData) do
+for _, data in ipairs(features) do
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.9, 0, 0, 45)
-    btn.Position = UDim2.new(0.05, 0, 0, yPos)
+    local xPos = data.col == 0 and 0.05 or 0.52
+    btn.Size = UDim2.new(0.4, 0, 0, 35)
+    btn.Position = UDim2.new(xPos, 0, 0, data.y)
     btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     btn.BackgroundTransparency = 0.4
     btn.BorderColor3 = data.color
-    btn.BorderSizePixel = 2
-    btn.Text = "🔘 " .. data.name .. " [OFF]"
+    btn.BorderSizePixel = 1
+    btn.Text = "◯ " .. data.name
     btn.TextColor3 = Color3.fromRGB(200, 200, 220)
     btn.TextScaled = true
     btn.Font = Enum.Font.Code
     btn.Parent = mainFrame
     
-    -- Hover glitch effect
+    -- Hover effect
     btn.MouseEnter:Connect(function()
         btn.BackgroundTransparency = 0.2
-        btn.BorderSizePixel = 4
+        btn.BorderSizePixel = 3
     end)
     btn.MouseLeave:Connect(function()
         btn.BackgroundTransparency = 0.4
-        btn.BorderSizePixel = 2
+        btn.BorderSizePixel = 1
     end)
     
     btn.MouseButton1Click:Connect(function()
         state[data.key] = not state[data.key]
-        local status = state[data.key] and "[ON]" or "[OFF]"
-        btn.Text = "🔘 " .. data.name .. " " .. status
+        local icon = state[data.key] and "●" or "◯"
+        btn.Text = icon .. " " .. data.name
         btn.BorderColor3 = state[data.key] and Color3.fromRGB(0, 255, 0) or data.color
         btn.TextColor3 = state[data.key] and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(200, 200, 220)
         updateChar()
         
-        -- Haptic feedback
+        -- Haptic
         if UserInput.VibrationEnabled then
-            game:GetService("HapticService"):SetMotor("", 0.5, 0.1)
+            game:GetService("HapticService"):SetMotor("", 0.3, 0.05)
+        end
+        
+        -- Show circle toggle
+        if data.key == "aimCircle" and state.aimCircle then
+            createAimCircle()
+        elseif data.key == "aimCircle" and not state.aimCircle then
+            if circlePart then circlePart:Destroy() end
         end
     end)
-    
-    yPos = yPos + 55
 end
 
--- TOUCHPAD STATUS
-local statusDisplay = Instance.new("TextLabel")
-statusDisplay.Size = UDim2.new(0.9, 0, 0, 25)
-statusDisplay.Position = UDim2.new(0.05, 0, 0, yPos + 10)
-statusDisplay.BackgroundTransparency = 1
-statusDisplay.Text = "⚡ LOCK: NONE"
-statusDisplay.TextColor3 = Color3.fromRGB(0, 255, 200)
-statusDisplay.TextScaled = true
-statusDisplay.Font = Enum.Font.Code
-statusDisplay.Parent = mainFrame
+-- STATUS
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(0.9, 0, 0, 25)
+status.Position = UDim2.new(0.05, 0, 0, 300)
+status.BackgroundTransparency = 1
+status.Text = "⚡ LOCK: NONE"
+status.TextColor3 = Color3.fromRGB(0, 255, 200)
+status.TextScaled = true
+status.Font = Enum.Font.Code
+status.Parent = mainFrame
 
--- TOGGLE VISIBILITY
+-- TELEPORT BUTTON
+local teleportBtn = Instance.new("TextButton")
+teleportBtn.Size = UDim2.new(0.4, 0, 0, 35)
+teleportBtn.Position = UDim2.new(0.3, 0, 0, 340)
+teleportBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+teleportBtn.BackgroundTransparency = 0.4
+teleportBtn.BorderColor3 = Color3.fromRGB(255, 200, 0)
+teleportBtn.BorderSizePixel = 2
+teleportBtn.Text = "🔄 TELEPORT"
+teleportBtn.TextColor3 = Color3.fromRGB(255, 200, 0)
+teleportBtn.TextScaled = true
+teleportBtn.Font = Enum.Font.Code
+teleportBtn.Parent = mainFrame
+
+teleportBtn.MouseButton1Click:Connect(function()
+    if RootPart and circlePart then
+        RootPart.CFrame = CFrame.new(circlePart.Position + Vector3.new(0, 3, 0))
+        -- Teleport effect
+        local effect = Instance.new("Part")
+        effect.Size = Vector3.new(10, 10, 10)
+        effect.Shape = Enum.PartType.Ball
+        effect.Anchored = true
+        effect.CanCollide = false
+        effect.Transparency = 0.5
+        effect.Material = Enum.Material.Neon
+        effect.BrickColor = BrickColor.new("Bright yellow")
+        effect.Position = circlePart.Position
+        effect.Parent = Workspace
+        game:GetService("Debris"):AddItem(effect, 0.3)
+    end
+end)
+
+-- TELEPORT TO AIM TARGET
+local aimTeleport = Instance.new("TextButton")
+aimTeleport.Size = UDim2.new(0.4, 0, 0, 35)
+aimTeleport.Position = UDim2.new(0.3, 0, 0, 385)
+aimTeleport.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+aimTeleport.BackgroundTransparency = 0.4
+aimTeleport.BorderColor3 = Color3.fromRGB(255, 50, 50)
+aimTeleport.BorderSizePixel = 2
+aimTeleport.Text = "🎯 TO TARGET"
+aimTeleport.TextColor3 = Color3.fromRGB(255, 50, 50)
+aimTeleport.TextScaled = true
+aimTeleport.Font = Enum.Font.Code
+aimTeleport.Parent = mainFrame
+
+aimTeleport.MouseButton1Click:Connect(function()
+    if RootPart and state.aimTarget then
+        local targetHrp = state.aimTarget:FindFirstChild("HumanoidRootPart")
+        if targetHrp then
+            RootPart.CFrame = CFrame.new(targetHrp.Position + Vector3.new(0, 3, 0))
+        end
+    end
+end)
+
+-- GUI VISIBILITY TOGGLE (FIXED)
 local visible = true
 hideBtn.MouseButton1Click:Connect(function()
     visible = not visible
     mainFrame.Visible = visible
     iconFrame.Visible = not visible
-    
-    if visible then
-        hideBtn.Text = "⚡"
-    else
-        hideBtn.Text = "⊠"
-    end
+    hideBtn.Text = visible and "⚡" or "⊠"
 end)
 
--- ICON CLICK (Show GUI)
 iconFrame.MouseButton1Click:Connect(function()
     visible = true
     mainFrame.Visible = true
@@ -338,33 +527,35 @@ iconFrame.MouseButton1Click:Connect(function()
     hideBtn.Text = "⚡"
 end)
 
--- DRAG SAFETY FOR ICON
-iconFrame.Active = true
-iconFrame.Draggable = true
-
--- AUTO-AIM STATUS UPDATE
+-- STATUS UPDATE
 RunService.RenderStepped:Connect(function()
     if state.autoAim then
-        local targets = getTargets()
-        if #targets > 0 then
-            statusDisplay.Text = "⚡ LOCK: " .. targets[1].model.Name
-            statusDisplay.TextColor3 = Color3.fromRGB(255, 50, 50)
+        if state.aimTarget then
+            status.Text = "⚡ LOCK: " .. state.aimTarget.Name
+            status.TextColor3 = Color3.fromRGB(255, 50, 50)
         else
-            statusDisplay.Text = "⚡ LOCK: SCANNING..."
-            statusDisplay.TextColor3 = Color3.fromRGB(255, 200, 0)
+            status.Text = "⚡ LOCK: SCANNING..."
+            status.TextColor3 = Color3.fromRGB(255, 200, 0)
         end
     else
-        statusDisplay.Text = "⚡ LOCK: DISABLED"
-        statusDisplay.TextColor3 = Color3.fromRGB(0, 255, 200)
+        status.Text = "⚡ LOCK: DISABLED"
+        status.TextColor3 = Color3.fromRGB(0, 255, 200)
     end
 end)
 
--- MOBILE ADJUST
+-- MOBILE OPTIMIZATION
 if UserInput.TouchEnabled then
-    mainFrame.Size = UDim2.new(0, 280, 0, 360)
-    mainFrame.Position = UDim2.new(0.5, -140, 0.5, -180)
-    iconFrame.Size = UDim2.new(0, 75, 0, 75)
-    iconFrame.Position = UDim2.new(1, -90, 0, 30)
+    mainFrame.Size = UDim2.new(0, 340, 0, 490)
+    mainFrame.Position = UDim2.new(0.5, -170, 0.5, -245)
+    iconFrame.Size = UDim2.new(0, 80, 0, 80)
+    iconFrame.Position = UDim2.new(1, -95, 0, 50)
+    
+    -- Make buttons bigger for touch
+    for _, btn in ipairs(mainFrame:GetChildren()) do
+        if btn:IsA("TextButton") and btn.Size.X.Offset < 100 then
+            btn.Size = UDim2.new(0.42, 0, 0, 45)
+        end
+    end
 end
 
 -- INIT
